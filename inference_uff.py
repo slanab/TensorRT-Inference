@@ -121,46 +121,68 @@ def main(unused_argv):
         img3 = np.ascontiguousarray(test_image[216:244,244:272])
         img4 = np.ascontiguousarray(test_image[244:272,244:272])
         imgs = np.array([img1, img2, img3, img4])
+        start_time = time.time()
 
-        img = img4
-        uff_model = open('uff_no_reshape.uff','rb').read()
+        img = img1
+        im1_uff_model = open('uff_no_reshape.uff','rb').read()
         out_sq = np.empty([28,28])
-        G_LOGGER = trt.infer.ConsoleLogger(trt.infer.LogSeverity.ERROR)
-        parser = uffparser.create_uff_parser()
-        parser.register_input("Reshape", (1,28,28), 0)
-        parser.register_output("output_score/output_relu")
-        engine = trt.utils.uff_to_trt_engine(G_LOGGER, uff_model, parser, 1, 1 << 20)
-        parser.destroy()
-        runtime = trt.infer.create_infer_runtime(G_LOGGER)
-        context = engine.create_execution_context()
-        output2 = np.empty(28*28*1, dtype = np.float32)
-        d_input = cuda.mem_alloc(1 * img.size * img.dtype.itemsize)
-        d_output = cuda.mem_alloc(1 * output2.size * output2.dtype.itemsize)
-        bindings = [int(d_input), int(d_output)]
-        stream = cuda.Stream()
+        im1_G_LOGGER = trt.infer.ConsoleLogger(trt.infer.LogSeverity.ERROR)
+        im1_parser = uffparser.create_uff_parser()
+        im1_parser.register_input("Reshape", (1,28,28), 0)
+        im1_parser.register_output("output_score/output_relu")
+        im1_engine = trt.utils.uff_to_trt_engine(im1_G_LOGGER, im1_uff_model, im1_parser, 1, 1 << 20)
+        im1_parser.destroy()
+        im1_runtime = trt.infer.create_infer_runtime(im1_G_LOGGER)
+        im1_context = im1_engine.create_execution_context()
+        im1_output = np.empty(28*28*1, dtype = np.float32)
+        im1_d_input = cuda.mem_alloc(1 * img.size * img.dtype.itemsize)
+        im1_d_output = cuda.mem_alloc(1 * im1_output.size * im1_output.dtype.itemsize)
+        im1_bindings = [int(im1_d_input), int(im1_d_output)]
+        im1_stream = cuda.Stream()
         ###transfer input data to device
-        cuda.memcpy_htod_async(d_input, img, stream)
+        cuda.memcpy_htod_async(im1_d_input, img, im1_stream)
         ###execute model
-        context.enqueue(1, bindings, stream.handle, None)
+        im1_context.enqueue(1, im1_bindings, im1_stream.handle, None)
         ###transfer predictions back
-        cuda.memcpy_dtoh_async(output2, d_output, stream)
+        cuda.memcpy_dtoh_async(im1_output, im1_d_output, im1_stream)
         ###syncronize threads
-        stream.synchronize()
-        out_sq = np.reshape(output2, (28,28))
-        trt.utils.write_engine_to_file("./tf_mnist.engine", engine.serialize())
-        new_engine = trt.utils.load_engine(G_LOGGER, "./tf_mnist.engine")
-        context.destroy()
-        engine.destroy()
+        im1_stream.synchronize()
+        out_sq = np.reshape(im1_output, (28,28))
+        trt.utils.write_engine_to_file("./tf_mnist.engine", im1_engine.serialize())
+        new_engine = trt.utils.load_engine(im1_G_LOGGER, "./tf_mnist.engine")
+        im1_context.destroy()
+        #im1_engine.destroy()
         new_engine.destroy()
-        runtime.destroy()
+        im1_runtime.destroy()
+        out1 = out_sq
+        make_image(out1, folder + img_name + "_uff_out1.png")
+
+        img = img2
+        im2_runtime = trt.infer.create_infer_runtime(im1_G_LOGGER)
+        context2 = im1_engine.create_execution_context()
+        output2 = np.empty(28*28*1, dtype = np.float32)
+        d_input2 = cuda.mem_alloc(1 * img.size * img.dtype.itemsize)
+        d_output2 = cuda.mem_alloc(1 * output2.size * output2.dtype.itemsize)
+        bindings2 = [int(d_input2), int(d_output2)]
+        stream2 = cuda.Stream()
+        cuda.memcpy_htod_async(d_input2, img, stream2)
+        context2.enqueue(1, bindings2, stream2.handle, None)
+        cuda.memcpy_dtoh_async(output2, d_output2, stream2)
+        stream2.synchronize()
+        out_sq = np.reshape(output2, (28,28))
+        new_engine2 = trt.utils.load_engine(im1_G_LOGGER, "./tf_mnist.engine")
+        context2.destroy()
+        im1_engine.destroy()
+        new_engine2.destroy()
+        im2_runtime.destroy()
         out2 = out_sq
-        make_image(out2, folder + img_name + "_uff_out2.png") 
+        make_image(out2, folder + img_name + "_uff_out2.png")
 
 
         out3 = out_sq
         out4 = out_sq
 
-        out_top = np.hstack((out2, out2))
+        out_top = np.hstack((out1, out2))
         out_btm = np.hstack((out3, out4))
         out_final = np.vstack((out_top, out_btm))
         print(out_final)
