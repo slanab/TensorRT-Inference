@@ -25,7 +25,6 @@ img_name = img_no + "_test"
 img_path =   'Images/' + img_name + ".tif"
 
 network_dir = 'Network/'
-save_dir = 'output/'
 
 separation = 8
 tile_size = 28      # size of the tiles that get input into the NN
@@ -34,15 +33,8 @@ threshold = 0.55        # acceptable probability the tile is a vessel
 input_pipe_l = []
 
 tf.logging.set_verbosity(tf.logging.ERROR)
-print(tf.VERSION)
+print("Available devices:")
 print device_lib.list_local_devices()
-print(tf.VERSION)
-
-if not os.path.exists(save_dir):
-    try:
-        os.makedirs(save_dir)
-    except OSError:
-        pass        
 
 def make_image(input_data, output_name):
     sizes = np.shape(input_data)     
@@ -56,20 +48,11 @@ def make_image(input_data, output_name):
     plt.close() 
 
 def main(unused_argv):
-
+    gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction = 0.1)
     start_time = time.time()
 
-    # Create the Estimator
-    est_config = tf.estimator.RunConfig()
-    est_config = est_config.replace(
-        model_dir = network_dir,
-        session_config=tf.ConfigProto(log_device_placement=False))
-
-    drive_classifier = tf.estimator.Estimator(
-            config = est_config, model_fn=cnn_model_fn) 
-
     if True:
-        folder = 'temp/'
+        folder = 'output/'
         if not os.path.exists(folder):
             try:
                 os.makedirs(folder)
@@ -116,52 +99,71 @@ def main(unused_argv):
 
         # Lana's code for using uff model
         print("====================================");
+        start_time = time.time()
+        num_tiles = np.size(input_g,0)
+        ### Test code for visual confirmation
+        #num_tiles = 4
         img1 = np.ascontiguousarray(test_image[216:244,216:244])
         img2 = np.ascontiguousarray(test_image[244:272,216:244])
         img3 = np.ascontiguousarray(test_image[216:244,244:272])
         img4 = np.ascontiguousarray(test_image[244:272,244:272])
         imgs = np.array([img1, img2, img3, img4])
-        out_sq = np.empty([28,28])
-        out_imgs_ch1 = np.empty([28,28,4])
-        out_imgs_ch2 = np.empty([28,28,4])
-        start_time = time.time()
+        print ("Processing " + str(num_tiles) + " tiles")
 
         ### General inference setup
         uff_model = open('uff_no_reshape.uff','rb').read()
         G_LOGGER = trt.infer.ConsoleLogger(trt.infer.LogSeverity.ERROR)
         parser = uffparser.create_uff_parser()
-        parser.register_input("Reshape", (1,28,28), 0)
+        parser.register_input("Reshape", (1,tile_size,tile_size), 0)
         parser.register_output("output_score/output_relu")
         engine = trt.utils.uff_to_trt_engine(G_LOGGER, uff_model, parser, 1, 1 << 20)
         parser.destroy()
         runtime = trt.infer.create_infer_runtime(G_LOGGER)
 
-        output = np.empty(28*28*2, dtype = np.float32)
+        # Alocate device memory
 
-        for i in range(0,4):
-            img = imgs[i]
+        nn_in = np.ascontiguousarray(input_g[0,:,:])
+        nn_out = np.empty(tile_size*tile_size*2, dtype = np.float32)
+        d_input = cuda.mem_alloc(1 * nn_in.size * nn_in.dtype.itemsize)
+        d_output = cuda.mem_alloc(1 * nn_out.size * nn_out.dtype.itemsize)
+        bindings = [int(d_input), int(d_output)]
+        stream = cuda.Stream()
+        out_imgs_ch1 = np.empty([tile_size,tile_size,num_tiles])
+        out_imgs_ch2 = np.empty([tile_size,tile_size,num_tiles])
+
+        for i in range(0,num_tiles):
+            if num_tiles == 4:
+                nn_in = imgs[i]
+            else:
+                nn_in = np.ascontiguousarray(input_g[i,:,:])
             context = engine.create_execution_context()
-            d_input = cuda.mem_alloc(1 * img.size * img.dtype.itemsize)
-            d_output = cuda.mem_alloc(1 * output.size * output.dtype.itemsize)
-            bindings = [int(d_input), int(d_output)]
-            stream = cuda.Stream()
-            cuda.memcpy_htod_async(d_input, img, stream)
+            #d_input = cuda.mem_alloc(1 * img.size * img.dtype.itemsize)
+            #d_output = cuda.mem_alloc(1 * output.size * output.dtype.itemsize)
+            #bindings = [int(d_input), int(d_output)]
+            #stream = cuda.Stream()
+
+            # Transfer input data to device
+            cuda.memcpy_htod_async(d_input, nn_in, stream)
+            # Execute model
             context.enqueue(1, bindings, stream.handle, None)
-            cuda.memcpy_dtoh_async(output, d_output, stream)
+            # Transfer predictions back
+            cuda.memcpy_dtoh_async(nn_out, d_output, stream)
+            # Syncronize threads
             stream.synchronize()
-            out_ch1 = np.reshape(output[0:28*28], (28,28))
-            out_ch2 = np.reshape(output[28*28:28*28*2], (28,28))
+            out_ch1 = np.reshape(nn_out[0:tile_size*tile_size], (tile_size,tile_size))
+            out_ch2 = np.reshape(nn_out[tile_size*tile_size:tile_size*tile_size*2], (tile_size,tile_size))
             context.destroy()
             out_imgs_ch1[:,:,i] = out_ch1
             out_imgs_ch2[:,:,i] = out_ch2
-            #make_image(out_sq, folder + img_name + str(i) + "_uff_out.png")
+            #make_image(out_ch1, folder + img_name + str(i) + "_uff_out.png")
             
-
         ### General inference cleanup
         new_engine = trt.utils.load_engine(G_LOGGER, "./tf_mnist.engine")
         engine.destroy()
         new_engine.destroy()
         runtime.destroy()
+        current_time = time.time() - start_time
+        print("Inference complete. Time elapsed: %f seconds." % current_time)    
 
         out0 = out_imgs_ch1[:,:,0]
         out1 = out_imgs_ch1[:,:,1]
@@ -188,7 +190,6 @@ def main(unused_argv):
         print("====================================");
 
 
-    current_time = time.time() - start_time
-    print("Done! Time elapsed: %f seconds." % current_time)    
+
 if __name__ == "__main__":
   tf.app.run()
