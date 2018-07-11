@@ -88,25 +88,17 @@ static const int IMG_W = 565;
 
 std::string locateFile(const std::string& input)
 {
-    std::vector<std::string> dirs{"data/lana/", "data/lana/Images/"};
-    std::string file;
-    const int MAX_DEPTH{10};
-    bool found{false};
-    for (auto &dir : dirs)
-    {
-        file = dir + input;
+	bool found{false};
+	std::string dir = "../data/";
+        std::string file = dir + input;
         std::cout << "Looking for " << file << std::endl;
-        for (int i = 0; i < MAX_DEPTH && !found; i++)
-        {
-            std::ifstream checkFile(file);
-            found = checkFile.is_open();
-            if (found) break;
-            file = "../" + file;
-        }
-        if (found) break;
-        file.clear();
-    }
-    return file;
+	std::ifstream checkFile(file);
+	found = checkFile.is_open();
+	if (found) 
+	{
+		std::cout << "Found requested file\n";
+	}
+	return file;
 }
 
 void loadFullImage(float buffer[IMG_H][IMG_W]) 
@@ -136,7 +128,7 @@ void loadFullImage(float buffer[IMG_H][IMG_W])
 	std::cout << "\nDone reading input, got " << i << " values\n";
 }
 
-void printTile(float* tile)
+void printTile(float tile[INPUT_H*INPUT_W])
 {
 	for (int i = 0; i < INPUT_H*INPUT_W; i++) 
 	{
@@ -210,11 +202,25 @@ void printOutput(int64_t eltCount, DataType dtype, void* buffer)
         std::cout << eltIdx << " => " << outputs[eltIdx] << "\n";
     }
 
-    saveCoeffs(outputs, eltCount, "../output_coeffs.txt");
+    //saveCoeffs(outputs, eltCount, "../output_coeffs.txt");
 
     std::cout << std::endl;
     delete[] outputs;
 }
+
+void saveCoeffs(int64_t eltCount, DataType dtype, void* buffer, string name)
+{
+	size_t memSize = eltCount * elementSize(dtype);
+	float* outputs = new float[eltCount];
+	CHECK(cudaMemcpy(outputs, buffer, memSize, cudaMemcpyDeviceToHost));
+
+	string filename = "../" + name + "_output_coeffs.txt";
+	saveCoeffs(outputs, eltCount, filename);
+
+	std::cout << std::endl;
+	delete[] outputs;
+}
+
 
 
 ICudaEngine* loadModelAndCreateEngine(const char* uffFile, int maxBatchSize,
@@ -252,22 +258,29 @@ void execute(ICudaEngine& engine)
 	float img2D[IMG_H][IMG_W];
 	loadFullImage(img2D);
 
-	// Create a tile
-	float tile1D[INPUT_H*INPUT_W];
-	int index = 0;
-	int x_offs = 244;
-	int y_offs = 244;
-	for (int i = 0; i < INPUT_H; i++)
-	{
-		for (int j = 0; j < INPUT_W; j++)
-		{
-			float value = img2D[x_offs + i][y_offs + j];
-                        tile1D[index] = value;
-                        //std::cout << tile1D[index];
-			index++;
-		}
-		//std::cout << std::endl;
-	}
+	// Create tiles
+/*
+
+
+
+            i_sep = int(separation)
+            x_values = np.arange(0,x_d,i_sep)
+            y_values = np.arange(0,y_d,i_sep)
+            if (x_d - 1) % i_sep != 0:
+                x_values = np.append(x_values, x_d - 1)
+            if (y_d - 1) % i_sep != 0:    
+                y_values = np.append(y_values, y_d - 1)
+*/
+
+	int tileSize = 28;
+	int separation = 8;
+	int x_d = IMG_H - tileSize + 1; //557
+	int y_d = IMG_W - tileSize + 1; //538
+	int* x_values = NULL;
+	int* y_values = NULL;
+	int x_sz = x_d/separation + 1 + 1; //71
+	int y_sz = y_d/separation + 1 + 1; //69
+	//std::cout << x_d << " " << y_d << " " << x_sz << " " << y_sz << "\n";
 
 	IExecutionContext* context = engine.createExecutionContext();
 	int batchSize = 1;
@@ -293,10 +306,27 @@ void execute(ICudaEngine& engine)
 
 	auto bufferSizesInput = buffersSizes[bindingIdxInput];
 
-	int numberRun = 5000;
+	float tile1D[INPUT_H*INPUT_W];
+	int numberRun = 1;
 	float total = 0, ms;
 	for (int run = 0; run < numberRun; run++)
 	{
+		std::cout << "==========\nRun number " << run << std::endl;
+		int index = 0;
+		int x_offs = 216;
+		int y_offs = 244;
+		for (int i = 0; i < INPUT_H; i++)
+		{
+			for (int j = 0; j < INPUT_W; j++)
+			{
+				float value = img2D[x_offs + i][y_offs + j];
+		                tile1D[index] = value;
+				index++;
+			}
+		}
+		std::cout << "Data to be sent to CUDA:\n";
+		printTile(tile1D);
+
 		int64_t eltCount = bufferSizesInput.first;
 		DataType dtype = bufferSizesInput.second;
 		size_t memSize = eltCount * elementSize(dtype);
@@ -304,8 +334,6 @@ void execute(ICudaEngine& engine)
 
 		float fileData[INPUT_H * INPUT_W];
 		memcpy(fileData, tile1D, INPUT_H*INPUT_W*sizeof(float));
-		//std::cout << "Data to be sent to CUDA:\n";
-		//printTile(tile1D);
 
 		/* initialize the inputs buffer */
 		for (int i = 0; i < eltCount; i++)
@@ -329,6 +357,7 @@ void execute(ICudaEngine& engine)
 				continue;
 
 			auto bufferSizesOutput = buffersSizes[bindingIdx];
+			saveCoeffs(bufferSizesOutput.first, bufferSizesOutput.second, buffers[bindingIdx], to_string(run));
 			//printOutput(bufferSizesOutput.first, bufferSizesOutput.second,
 			//buffers[bindingIdx]);
 		}
@@ -348,7 +377,6 @@ void execute(ICudaEngine& engine)
 int main(int argc, char** argv)
 {
     auto fileName = locateFile("uff_no_reshape.uff");
-    std::cout << fileName << std::endl;
 
     int maxBatchSize = 1;
     auto parser = createUffParser();
