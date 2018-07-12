@@ -140,6 +140,18 @@ void printTile(float tile[INPUT_H*INPUT_W])
 	std::cout << std::endl;
 }
 
+void printTile2D(float tile[][INPUT_W])
+{
+	for (int i = 0; i < INPUT_H; i++) 
+	{
+		for (int j = 0; j < INPUT_W; j++) {
+			std::cout << tile[i][j] << "\t";
+		}
+		std::cout << std::endl;
+	}
+	std::cout << std::endl;
+}
+
 void saveCoeffs(float* coefficients, int numElements, string filename)
 {
 	std::cout << "Saving coefficients to " << filename << std::endl;
@@ -149,6 +161,22 @@ void saveCoeffs(float* coefficients, int numElements, string filename)
 	for (int i = 0; i < numElements; i++)
 	{
 		myfile << std::to_string(coefficients[i]) << std::endl;
+	}
+	myfile.close();
+}
+
+
+void saveCoeffs2D(float coefficients[][28], int numElements, string filename)
+{
+	std::cout << "Saving coefficients to " << filename << std::endl;
+	string line;
+	ofstream myfile;
+	myfile.open(filename);
+	for (int i = 0; i < numElements; i++)
+	{
+		for (int j = 0; j < numElements; j++) {
+			myfile << std::to_string(coefficients[i][j]) << std::endl;
+		}
 	}
 	myfile.close();
 }
@@ -221,6 +249,18 @@ void saveCoeffs(int64_t eltCount, DataType dtype, void* buffer, string name)
 	delete[] outputs;
 }
 
+void loadOutput(int64_t eltCount, DataType dtype, void* buffer, float output_buffer[28*28*2])
+{
+	size_t memSize = eltCount * elementSize(dtype);
+	float* outputs = new float[eltCount];
+	CHECK(cudaMemcpy(outputs, buffer, memSize, cudaMemcpyDeviceToHost));
+
+	memcpy(output_buffer, outputs, memSize);
+
+	std::cout << std::endl;
+	delete[] outputs;
+}
+
 
 
 ICudaEngine* loadModelAndCreateEngine(const char* uffFile, int maxBatchSize,
@@ -253,33 +293,32 @@ ICudaEngine* loadModelAndCreateEngine(const char* uffFile, int maxBatchSize,
     return engine;
 }
 
+
+void printImage(int image[][IMG_W])
+{
+	for (int i = 0; i < IMG_H; i++) {
+		for (int j = 0; j < IMG_W; j++) {
+			std::cout << image[i][j] << " ";
+		}
+		std::cout << std::endl;
+	}
+}
 void execute(ICudaEngine& engine)
 {
 	float img2D[IMG_H][IMG_W];
 	loadFullImage(img2D);
 
 	// Create tiles
-/*
 
 
-
-            i_sep = int(separation)
-            x_values = np.arange(0,x_d,i_sep)
-            y_values = np.arange(0,y_d,i_sep)
-            if (x_d - 1) % i_sep != 0:
-                x_values = np.append(x_values, x_d - 1)
-            if (y_d - 1) % i_sep != 0:    
-                y_values = np.append(y_values, y_d - 1)
-*/
-
-	int tileSize = 28;
+	/*int tileSize = 28;
 	int separation = 8;
 	int x_d = IMG_H - tileSize + 1; //557
 	int y_d = IMG_W - tileSize + 1; //538
 	int* x_values = NULL;
 	int* y_values = NULL;
-	int x_sz = x_d/separation + 1 + 1; //71
-	int y_sz = y_d/separation + 1 + 1; //69
+	int x_num = x_d/separation + 1 + 1; //71
+	int y_num = y_d/separation + 1 + 1; //69*/
 	//std::cout << x_d << " " << y_d << " " << x_sz << " " << y_sz << "\n";
 
 	IExecutionContext* context = engine.createExecutionContext();
@@ -307,14 +346,27 @@ void execute(ICudaEngine& engine)
 	auto bufferSizesInput = buffersSizes[bindingIdxInput];
 
 	float tile1D[INPUT_H*INPUT_W];
+
+	int imgHits[IMG_H][IMG_W];
+	for (int i = 0; i < IMG_H; i++) {
+		for (int j = 0; j < IMG_W; j++) {
+			imgHits[i][j] = 0;
+		}
+	}
+	//printImage(imgHits);
+
+	std::cout << "Done image\n\n\n";
+	int x_offs_next = 216;
+	int y_offs_next = 216;
 	int numberRun = 1;
 	float total = 0, ms;
 	for (int run = 0; run < numberRun; run++)
 	{
-		std::cout << "==========\nRun number " << run << std::endl;
+		int x_offs = x_offs_next;
+		int y_offs = y_offs_next;
+		//std::cout << "==========\nRun number " << run << std::endl;
+		//std::cout << "X: " << x_offs << " Y: " << y_offs << std::endl;
 		int index = 0;
-		int x_offs = 216;
-		int y_offs = 244;
 		for (int i = 0; i < INPUT_H; i++)
 		{
 			for (int j = 0; j < INPUT_W; j++)
@@ -322,11 +374,12 @@ void execute(ICudaEngine& engine)
 				float value = img2D[x_offs + i][y_offs + j];
 		                tile1D[index] = value;
 				index++;
+				imgHits[x_offs + i][y_offs + j]++;
 			}
 		}
-		std::cout << "Data to be sent to CUDA:\n";
-		printTile(tile1D);
-
+		//std::cout << "Data to be sent to CUDA:\n";
+		//printTile(tile1D);
+		
 		int64_t eltCount = bufferSizesInput.first;
 		DataType dtype = bufferSizesInput.second;
 		size_t memSize = eltCount * elementSize(dtype);
@@ -335,7 +388,7 @@ void execute(ICudaEngine& engine)
 		float fileData[INPUT_H * INPUT_W];
 		memcpy(fileData, tile1D, INPUT_H*INPUT_W*sizeof(float));
 
-		/* initialize the inputs buffer */
+		// initialize the inputs buffer
 		for (int i = 0; i < eltCount; i++)
 			inputs[i] = 1.0 - float(fileData[i]) / 255.0;
 
@@ -357,13 +410,29 @@ void execute(ICudaEngine& engine)
 				continue;
 
 			auto bufferSizesOutput = buffersSizes[bindingIdx];
-			saveCoeffs(bufferSizesOutput.first, bufferSizesOutput.second, buffers[bindingIdx], to_string(run));
-			//printOutput(bufferSizesOutput.first, bufferSizesOutput.second,
-			//buffers[bindingIdx]);
+			int64_t eltCount = bufferSizesOutput.first;
+			DataType dtype = bufferSizesOutput.second;
+			float output_ch1[INPUT_H][INPUT_W];
+			float output_ch2[INPUT_H][INPUT_W];
+			float output_full[INPUT_H*INPUT_W];
+			loadOutput(eltCount, dtype, buffers[bindingIdx], output_full);
+			memcpy(output_ch1, output_full, 28*28 * sizeof(output_full[0]));
+			printOutput(eltCount, dtype, buffers[bindingIdx]);
+			printTile2D(output_ch1);
+			saveCoeffs2D(output_ch1, 28, "../temp.txt");
+
 		}
 		CHECK(cudaFree(buffers[bindingIdxInput]));
-	}
 
+		x_offs_next = x_offs + 8;
+		if (x_offs_next + 28 > IMG_H)
+		{
+			//std::cout << "Reached end of image at " << x_offs_next << std::endl;
+			numberRun = run + 1;
+			break;
+		}
+	}
+	//printImage(imgHits);
 	float average = total / numberRun;
 	std::cout << "Average over " << numberRun << " runs is " << average << " ms. Total " << total << std::endl;
 
