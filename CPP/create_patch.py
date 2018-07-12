@@ -20,7 +20,7 @@ def make_image(input_data, output_name):
 img_in = sys.argv[1];
 with open(img_in) as f:
     floats = map(float, f)
-img_ch1 = np.reshape(floats, (584,565))
+img_ch1 = np.reshape(floats[0:784], (28,28))
 #img_ch2 = np.reshape(floats[784:], (28,28))
 print(type(img_ch1[0,0]))
 print(img_ch1.shape)

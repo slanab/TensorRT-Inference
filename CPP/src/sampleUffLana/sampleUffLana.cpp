@@ -181,6 +181,21 @@ void saveCoeffs2D(float coefficients[][28], int numElements, string filename)
 	myfile.close();
 }
 
+void saveImageFull(float coefficients[][IMG_W], string filename)
+{
+	std::cout << "Saving coefficients to " << filename << std::endl;
+	string line;
+	ofstream myfile;
+	myfile.open(filename);
+	for (int i = 0; i < IMG_H; i++)
+	{
+		for (int j = 0; j < IMG_W; j++) {
+			myfile << std::to_string(coefficients[i][j]) << std::endl;
+		}
+	}
+	myfile.close();
+}
+
 void* safeCudaMalloc(size_t memSize)
 {
     void* deviceMem;
@@ -230,8 +245,6 @@ void printOutput(int64_t eltCount, DataType dtype, void* buffer)
         std::cout << eltIdx << " => " << outputs[eltIdx] << "\n";
     }
 
-    //saveCoeffs(outputs, eltCount, "../output_coeffs.txt");
-
     std::cout << std::endl;
     delete[] outputs;
 }
@@ -245,7 +258,6 @@ void saveCoeffs(int64_t eltCount, DataType dtype, void* buffer, string name)
 	string filename = "../" + name + "_output_coeffs.txt";
 	saveCoeffs(outputs, eltCount, filename);
 
-	std::cout << std::endl;
 	delete[] outputs;
 }
 
@@ -257,11 +269,8 @@ void loadOutput(int64_t eltCount, DataType dtype, void* buffer, float output_buf
 
 	memcpy(output_buffer, outputs, memSize);
 
-	std::cout << std::endl;
 	delete[] outputs;
 }
-
-
 
 ICudaEngine* loadModelAndCreateEngine(const char* uffFile, int maxBatchSize,
                                       IUffParser* parser)
@@ -308,19 +317,6 @@ void execute(ICudaEngine& engine)
 	float img2D[IMG_H][IMG_W];
 	loadFullImage(img2D);
 
-	// Create tiles
-
-
-	/*int tileSize = 28;
-	int separation = 8;
-	int x_d = IMG_H - tileSize + 1; //557
-	int y_d = IMG_W - tileSize + 1; //538
-	int* x_values = NULL;
-	int* y_values = NULL;
-	int x_num = x_d/separation + 1 + 1; //71
-	int y_num = y_d/separation + 1 + 1; //69*/
-	//std::cout << x_d << " " << y_d << " " << x_sz << " " << y_sz << "\n";
-
 	IExecutionContext* context = engine.createExecutionContext();
 	int batchSize = 1;
 
@@ -353,14 +349,20 @@ void execute(ICudaEngine& engine)
 			imgHits[i][j] = 0;
 		}
 	}
-	//printImage(imgHits);
+	float imgTotal[IMG_H][IMG_W];
+	for (int i = 0; i < IMG_H; i++) {
+		for (int j = 0; j < IMG_W; j++) {
+			imgTotal[i][j] = 0.0;
+		}
+	}
 
-	std::cout << "Done image\n\n\n";
-	int x_offs_next = 216;
-	int y_offs_next = 216;
-	int numberRun = 1;
+	int x_offs_next = 0;
+	int y_offs_next = 0;
+	int maxRuns = 10000;
+	int totalRuns = 0;
 	float total = 0, ms;
-	for (int run = 0; run < numberRun; run++)
+	int separation = 8;
+	for (int run = 0; run < maxRuns; run++)
 	{
 		int x_offs = x_offs_next;
 		int y_offs = y_offs_next;
@@ -372,9 +374,7 @@ void execute(ICudaEngine& engine)
 			for (int j = 0; j < INPUT_W; j++)
 			{
 				float value = img2D[x_offs + i][y_offs + j];
-		                tile1D[index] = value;
-				index++;
-				imgHits[x_offs + i][y_offs + j]++;
+		                tile1D[index++] = value;
 			}
 		}
 		//std::cout << "Data to be sent to CUDA:\n";
@@ -383,19 +383,13 @@ void execute(ICudaEngine& engine)
 		int64_t eltCount = bufferSizesInput.first;
 		DataType dtype = bufferSizesInput.second;
 		size_t memSize = eltCount * elementSize(dtype);
-		float* inputs = new float[eltCount];
 
 		float fileData[INPUT_H * INPUT_W];
 		memcpy(fileData, tile1D, INPUT_H*INPUT_W*sizeof(float));
 
-		// initialize the inputs buffer
-		for (int i = 0; i < eltCount; i++)
-			inputs[i] = 1.0 - float(fileData[i]) / 255.0;
-
 		void* deviceMem = safeCudaMalloc(memSize);
 		CHECK(cudaMemcpy(deviceMem, fileData, memSize, cudaMemcpyHostToDevice));
 
-		delete[] inputs;
 		buffers[bindingIdxInput] =  deviceMem;
 
 		auto t_start = std::chrono::high_resolution_clock::now();
@@ -412,33 +406,61 @@ void execute(ICudaEngine& engine)
 			auto bufferSizesOutput = buffersSizes[bindingIdx];
 			int64_t eltCount = bufferSizesOutput.first;
 			DataType dtype = bufferSizesOutput.second;
-			float output_ch1[INPUT_H][INPUT_W];
-			float output_ch2[INPUT_H][INPUT_W];
 			float output_full[INPUT_H*INPUT_W];
 			loadOutput(eltCount, dtype, buffers[bindingIdx], output_full);
-			memcpy(output_ch1, output_full, 28*28 * sizeof(output_full[0]));
-			printOutput(eltCount, dtype, buffers[bindingIdx]);
-			printTile2D(output_ch1);
-			saveCoeffs2D(output_ch1, 28, "../temp.txt");
 
+			float output_ch1[INPUT_H][INPUT_W];
+			//float output_ch2[INPUT_H][INPUT_W];
+			memcpy(output_ch1, output_full, 28*28 * sizeof(output_full[0]));
+			//printOutput(eltCount, dtype, buffers[bindingIdx]);
+			//printTile2D(output_ch1);
+			// TODO: This should be added to the global final count and then divided
+			//saveCoeffs2D(output_ch1, 28, "../temp.txt");
+			for (int i = 0; i < INPUT_H; i++)
+			{
+				for (int j = 0; j < INPUT_W; j++)
+				{
+					imgHits[x_offs + i][y_offs + j]++;
+					imgTotal[x_offs + i][y_offs + j] = imgTotal[x_offs + i][y_offs + j] + output_ch1[i][j];
+				}
+			}
 		}
 		CHECK(cudaFree(buffers[bindingIdxInput]));
 
-		x_offs_next = x_offs + 8;
-		if (x_offs_next + 28 > IMG_H)
+		x_offs_next = x_offs + separation;
+		if (x_offs_next + separation > IMG_H)
 		{
-			//std::cout << "Reached end of image at " << x_offs_next << std::endl;
-			numberRun = run + 1;
-			break;
+			y_offs_next = y_offs + separation;
+			//std::cout << "Reached end of line at " << x_offs_next << std::endl;
+			if (y_offs_next + separation > IMG_W)
+			{
+				//std::cout << "Reached end of image at " << x_offs_next << ":" << y_offs_next << std::endl;
+				break;
+			}
+			x_offs_next = 0;
+		}
+		totalRuns++;
+	}
+
+	float imgFinal[IMG_H][IMG_W];
+	for (int i = 0; i < IMG_H; i++) {
+		for (int j = 0; j < IMG_W; j++) {
+			imgFinal[i][j] = imgTotal[i][j] / imgHits[i][j];
 		}
 	}
+	saveImageFull(imgFinal, "../full_image.txt");
+
 	//printImage(imgHits);
-	float average = total / numberRun;
-	std::cout << "Average over " << numberRun << " runs is " << average << " ms. Total " << total << std::endl;
+	float average = total / totalRuns;
+	std::cout << "Average over " << totalRuns << " runs is " << average << " ms. Total " << total << std::endl;
 
 	for (int bindingIdx = 0; bindingIdx < nbBindings; ++bindingIdx)
+	{
 		if (!engine.bindingIsInput(bindingIdx))
+		{
 			CHECK(cudaFree(buffers[bindingIdx]));
+		}
+	}
 	context->destroy();
 }
 
