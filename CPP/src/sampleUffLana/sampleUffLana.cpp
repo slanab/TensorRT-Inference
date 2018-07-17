@@ -7,16 +7,19 @@
 #include <cuda_runtime.h>
 #include "/home/sfu-borg/TensorRT3-1404/TensorRT-3.0.4/include/NvUffParser.h"
 
-//#include <cstdlib>
-//#include <string>
-//#include <sys/stat.h>
-//#include <unordered_map>
-//#include <vector>
-//#include "NvInfer.h"
-//#include "NvUtils.h"
-
 using namespace nvuffparser;
 using namespace nvinfer1;
+
+static const int INPUT_H = 28;
+static const int INPUT_W = 28;
+static const int INPUT_SIZE = INPUT_H*INPUT_W;
+static const int separation = 8;
+static const int OUT_CH = 2;
+
+static const int BATCH_SIZE = 200;
+
+static const int IMG_H = 584;
+static const int IMG_W = 565;
 
 class Logger : public nvinfer1::ILogger			
 {
@@ -79,14 +82,6 @@ inline unsigned int elementSize(DataType t)
 	return 0;
 }
 
-
-static const int INPUT_H = 28;
-static const int INPUT_W = 28;
-static const int INPUT_SIZE = INPUT_H*INPUT_W;
-
-static const int IMG_H = 584;
-static const int IMG_W = 565;
-
 std::string locateFile(const std::string& input)
 {
 	bool found{false};
@@ -127,59 +122,6 @@ void loadFullImage(float buffer[IMG_H][IMG_W])
 
         memcpy(buffer[0], fullImage, IMG_H * IMG_W * sizeof(float)) ;
 	std::cout << "\nDone reading input, got " << i << " values\n";
-}
-
-void printTile(float tile[INPUT_H*INPUT_W])
-{
-	for (int i = 0; i < INPUT_H*INPUT_W; i++) 
-	{
-		if (i % INPUT_W == 0) {
-			std::cout << std::endl;
-		}
-		std::cout << int(tile[i]) << "\t";
-	}
-	std::cout << std::endl;
-}
-
-void printTile2D(float tile[][INPUT_W])
-{
-	for (int i = 0; i < INPUT_H; i++) 
-	{
-		for (int j = 0; j < INPUT_W; j++) {
-			std::cout << tile[i][j] << "\t";
-		}
-		std::cout << std::endl;
-	}
-	std::cout << std::endl;
-}
-
-void saveCoeffs(float* coefficients, int numElements, string filename)
-{
-	std::cout << "Saving coefficients to " << filename << std::endl;
-	string line;
-	ofstream myfile;
-	myfile.open(filename);
-	for (int i = 0; i < numElements; i++)
-	{
-		myfile << std::to_string(coefficients[i]) << std::endl;
-	}
-	myfile.close();
-}
-
-
-void saveCoeffs2D(float coefficients[][28], string filename)
-{
-	std::cout << "Saving coefficients to " << filename << std::endl;
-	string line;
-	ofstream myfile;
-	myfile.open(filename);
-	for (int i = 0; i < 28; i++)
-	{
-		for (int j = 0; j < 28; j++) {
-			myfile << std::to_string(coefficients[i][j]) << std::endl;
-		}
-	}
-	myfile.close();
 }
 
 void saveImageFull(float coefficients[][IMG_W], string filename)
@@ -226,42 +168,6 @@ calculateBindingBufferSizes(const ICudaEngine& engine, int nbBindings, int batch
     return sizes;
 }
 
-void printOutput(int64_t eltCount, DataType dtype, void* buffer)
-{
-    std::cout << eltCount << " eltCount" << std::endl;
-    assert(elementSize(dtype) == sizeof(float));
-    std::cout << "--- OUTPUT ---" << std::endl;
-
-    size_t memSize = eltCount * elementSize(dtype);
-    float* outputs = new float[eltCount];
-    CHECK(cudaMemcpy(outputs, buffer, memSize, cudaMemcpyDeviceToHost));
-
-    int maxIdx = 0;
-    for (int i = 0; i < eltCount; ++i)
-        if (outputs[i] > outputs[maxIdx])
-            maxIdx = i;
-
-    for (int64_t eltIdx = 0; eltIdx < eltCount; ++eltIdx)
-    {
-        std::cout << eltIdx << " => " << outputs[eltIdx] << "\n";
-    }
-
-    std::cout << std::endl;
-    delete[] outputs;
-}
-
-void saveCoeffs(int64_t eltCount, DataType dtype, void* buffer, string name)
-{
-	size_t memSize = eltCount * elementSize(dtype);
-	float* outputs = new float[eltCount];
-	CHECK(cudaMemcpy(outputs, buffer, memSize, cudaMemcpyDeviceToHost));
-
-	string filename = "../" + name + "_output_coeffs.txt";
-	saveCoeffs(outputs, eltCount, filename);
-
-	delete[] outputs;
-}
-
 ICudaEngine* loadModelAndCreateEngine(const char* uffFile, int maxBatchSize,
                                       IUffParser* parser)
 {
@@ -292,18 +198,7 @@ ICudaEngine* loadModelAndCreateEngine(const char* uffFile, int maxBatchSize,
     return engine;
 }
 
-
-void printImage(int image[][IMG_W])
-{
-	for (int i = 0; i < IMG_H; i++) {
-		for (int j = 0; j < IMG_W; j++) {
-			std::cout << image[i][j] << " ";
-		}
-		std::cout << std::endl;
-	}
-}
-
-void loadOutput(int64_t eltCount, DataType dtype, void* buffer, float output_buffer[2*28*28*2])
+void loadOutput(int64_t eltCount, DataType dtype, void* buffer, float output_buffer[OUT_CH*INPUT_SIZE*BATCH_SIZE])
 {
 	size_t memSize = eltCount * elementSize(dtype);
 	float* outputs = new float[eltCount];
@@ -320,7 +215,7 @@ void execute(ICudaEngine& engine)
 	loadFullImage(img2D);
 
 	IExecutionContext* context = engine.createExecutionContext();
-	int batchSize = 2;
+	int batchSize = BATCH_SIZE;
 
 	int nbBindings = engine.getNbBindings();
 	assert(nbBindings == 2);
@@ -366,7 +261,7 @@ void execute(ICudaEngine& engine)
 
 	int patchStartIndex[2][batchSize];
 
-	int separation = 8;
+
 
 	bool flag = false;
 	for (int run = 0; run < MAX_RUNS; run++)
@@ -379,16 +274,7 @@ void execute(ICudaEngine& engine)
 		for (int batchNum = 0; batchNum < batchSize; batchNum++) {
 			x_offs = x_offs_next;
 			y_offs = y_offs_next;
-			if (x_offs + INPUT_H > IMG_H) {
-				//std::cout << "Reached end of line at " << x_offs_next << std::endl;
-				y_offs = y_offs + separation;
-				x_offs = 0;
-				if (y_offs + INPUT_W > IMG_W) {
-					std::cout << "Reached end of image at " << y_offs_next << std::endl;
-					flag = true;
-					break;
-				}
-			}
+
 			//std::cout << "X: " << x_offs << " Y: " << y_offs << std::endl;
 			patchStartIndex[0][batchNum] = x_offs;
 			patchStartIndex[1][batchNum] = y_offs;
@@ -401,9 +287,23 @@ void execute(ICudaEngine& engine)
 				        tile1D[index++] = value;
 				}
 			}
+
 			x_offs_next = x_offs + separation;
 			y_offs_next = y_offs;
-			totalRuns++;
+			if (x_offs + INPUT_H == IMG_H) {
+				//std::cout << "Reached end of line at " << x_offs_next << std::endl;
+				y_offs_next = y_offs + separation;
+				x_offs_next = 0;
+				if (y_offs + INPUT_W > IMG_W) {
+					//std::cout << "Reached end of image at " << y_offs_next << std::endl;
+					flag = true;
+					break;
+				}
+			} else if (x_offs_next + INPUT_H > IMG_H) {
+				//std::cout << "Get corner one for " << x_offs_next << std::endl;
+				x_offs_next = IMG_H - INPUT_H;
+				//std::cout << "Now " << x_offs_next << std::endl;
+			}
 		}
 
 		int64_t eltCount = bufferSizesInput.first;
@@ -436,9 +336,7 @@ void execute(ICudaEngine& engine)
 
 			for (int batchNum = 0; batchNum < batchesSent; batchNum++) {
 				float output_ch1[INPUT_H][INPUT_W];
-				memcpy(output_ch1, output_full + 2 * batchNum * INPUT_SIZE, INPUT_SIZE * sizeof(float));
-				//string saveName = "../patch_" + to_string(batchNum) + ".txt";
-				//saveCoeffs2D(output_ch1, saveName);
+				memcpy(output_ch1, output_full + OUT_CH * batchNum * INPUT_SIZE, INPUT_SIZE * sizeof(float));
 				x_offs = patchStartIndex[0][batchNum];
 				y_offs = patchStartIndex[1][batchNum];
 				for (int i = 0; i < INPUT_H; i++)
@@ -449,6 +347,7 @@ void execute(ICudaEngine& engine)
 						imgTotal[x_offs + i][y_offs + j] = imgTotal[x_offs + i][y_offs + j] + output_ch1[i][j];
 					}
 				}
+				totalRuns++;
 			}
 		}
 		auto t_end = std::chrono::high_resolution_clock::now();
@@ -456,8 +355,6 @@ void execute(ICudaEngine& engine)
 		total += ms;
 
 		CHECK(cudaFree(buffers[bindingIdxInput]));
-
-
 		if (flag) 
 		{
 			break;
@@ -485,12 +382,11 @@ void execute(ICudaEngine& engine)
 	context->destroy();
 }
 
-
 int main(int argc, char** argv)
 {
     auto fileName = locateFile("uff_no_reshape.uff");
 
-    int maxBatchSize = 2;
+    int maxBatchSize = BATCH_SIZE;
     auto parser = createUffParser();
 
     /* Register tensorflow input */
