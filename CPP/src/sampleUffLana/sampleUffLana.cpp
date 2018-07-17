@@ -1,18 +1,19 @@
 #include <algorithm>
 #include <chrono>
-#include <cstdlib>
-#include <cuda_runtime_api.h>
 #include <fstream>
 #include <iostream>
-#include <string>
-#include <sys/stat.h>
-#include <unordered_map>
 #include <cassert>
-#include <vector>
-#include "NvInfer.h"
-#include "NvUffParser.h"
-#include "NvUtils.h"
 #include <string.h>
+#include <cuda_runtime.h>
+#include "/home/sfu-borg/TensorRT3-1404/TensorRT-3.0.4/include/NvUffParser.h"
+
+//#include <cstdlib>
+//#include <string>
+//#include <sys/stat.h>
+//#include <unordered_map>
+//#include <vector>
+//#include "NvInfer.h"
+//#include "NvUtils.h"
 
 using namespace nvuffparser;
 using namespace nvinfer1;
@@ -81,7 +82,7 @@ inline unsigned int elementSize(DataType t)
 
 static const int INPUT_H = 28;
 static const int INPUT_W = 28;
-static const int OUTPUT_SIZE = 10;
+static const int INPUT_SIZE = INPUT_H*INPUT_W;
 
 static const int IMG_H = 584;
 static const int IMG_W = 565;
@@ -166,15 +167,15 @@ void saveCoeffs(float* coefficients, int numElements, string filename)
 }
 
 
-void saveCoeffs2D(float coefficients[][28], int numElements, string filename)
+void saveCoeffs2D(float coefficients[][28], string filename)
 {
 	std::cout << "Saving coefficients to " << filename << std::endl;
 	string line;
 	ofstream myfile;
 	myfile.open(filename);
-	for (int i = 0; i < numElements; i++)
+	for (int i = 0; i < 28; i++)
 	{
-		for (int j = 0; j < numElements; j++) {
+		for (int j = 0; j < 28; j++) {
 			myfile << std::to_string(coefficients[i][j]) << std::endl;
 		}
 	}
@@ -261,17 +262,6 @@ void saveCoeffs(int64_t eltCount, DataType dtype, void* buffer, string name)
 	delete[] outputs;
 }
 
-void loadOutput(int64_t eltCount, DataType dtype, void* buffer, float output_buffer[28*28*2])
-{
-	size_t memSize = eltCount * elementSize(dtype);
-	float* outputs = new float[eltCount];
-	CHECK(cudaMemcpy(outputs, buffer, memSize, cudaMemcpyDeviceToHost));
-
-	memcpy(output_buffer, outputs, memSize);
-
-	delete[] outputs;
-}
-
 ICudaEngine* loadModelAndCreateEngine(const char* uffFile, int maxBatchSize,
                                       IUffParser* parser)
 {
@@ -312,13 +302,25 @@ void printImage(int image[][IMG_W])
 		std::cout << std::endl;
 	}
 }
+
+void loadOutput(int64_t eltCount, DataType dtype, void* buffer, float output_buffer[2*28*28*2])
+{
+	size_t memSize = eltCount * elementSize(dtype);
+	float* outputs = new float[eltCount];
+	CHECK(cudaMemcpy(outputs, buffer, memSize, cudaMemcpyDeviceToHost));
+
+	memcpy(output_buffer, outputs, memSize);
+
+	delete[] outputs;
+}
+
 void execute(ICudaEngine& engine)
 {
 	float img2D[IMG_H][IMG_W];
 	loadFullImage(img2D);
 
 	IExecutionContext* context = engine.createExecutionContext();
-	int batchSize = 1;
+	int batchSize = 2;
 
 	int nbBindings = engine.getNbBindings();
 	assert(nbBindings == 2);
@@ -341,7 +343,7 @@ void execute(ICudaEngine& engine)
 
 	auto bufferSizesInput = buffersSizes[bindingIdxInput];
 
-	float tile1D[INPUT_H*INPUT_W];
+	float tile1D[batchSize*INPUT_H*INPUT_W];
 
 	int imgHits[IMG_H][IMG_W];
 	for (int i = 0; i < IMG_H; i++) {
@@ -355,37 +357,61 @@ void execute(ICudaEngine& engine)
 			imgTotal[i][j] = 0.0;
 		}
 	}
+	int MAX_RUNS = 5000;
+	int totalRuns = 0;
+	float total = 0, ms;
 
 	int x_offs_next = 0;
 	int y_offs_next = 0;
-	int maxRuns = 10000;
-	int totalRuns = 0;
-	float total = 0, ms;
+
+	int patchStartIndex[2][batchSize];
+
 	int separation = 8;
-	for (int run = 0; run < maxRuns; run++)
+
+	bool flag = false;
+	for (int run = 0; run < MAX_RUNS; run++)
 	{
 		int x_offs = x_offs_next;
 		int y_offs = y_offs_next;
 		//std::cout << "==========\nRun number " << run << std::endl;
-		//std::cout << "X: " << x_offs << " Y: " << y_offs << std::endl;
 		int index = 0;
-		for (int i = 0; i < INPUT_H; i++)
-		{
-			for (int j = 0; j < INPUT_W; j++)
-			{
-				float value = img2D[x_offs + i][y_offs + j];
-		                tile1D[index++] = value;
+		int batchesSent = 0;
+		for (int batchNum = 0; batchNum < batchSize; batchNum++) {
+			x_offs = x_offs_next;
+			y_offs = y_offs_next;
+			if (x_offs + INPUT_H > IMG_H) {
+				//std::cout << "Reached end of line at " << x_offs_next << std::endl;
+				y_offs = y_offs + separation;
+				x_offs = 0;
+				if (y_offs + INPUT_W > IMG_W) {
+					std::cout << "Reached end of image at " << y_offs_next << std::endl;
+					flag = true;
+					break;
+				}
 			}
+			//std::cout << "X: " << x_offs << " Y: " << y_offs << std::endl;
+			patchStartIndex[0][batchNum] = x_offs;
+			patchStartIndex[1][batchNum] = y_offs;
+			batchesSent = batchNum;
+			for (int i = 0; i < INPUT_H; i++)
+			{
+				for (int j = 0; j < INPUT_W; j++)
+				{
+					float value = img2D[x_offs + i][y_offs + j];
+				        tile1D[index++] = value;
+				}
+			}
+			x_offs_next = x_offs + separation;
+			y_offs_next = y_offs;
+			totalRuns++;
 		}
-		//std::cout << "Data to be sent to CUDA:\n";
-		//printTile(tile1D);
-		
+
 		int64_t eltCount = bufferSizesInput.first;
 		DataType dtype = bufferSizesInput.second;
 		size_t memSize = eltCount * elementSize(dtype);
 
-		float fileData[INPUT_H * INPUT_W];
-		memcpy(fileData, tile1D, INPUT_H*INPUT_W*sizeof(float));
+		float fileData[batchSize * INPUT_H * INPUT_W];
+		memcpy(fileData, tile1D, batchSize * INPUT_H*INPUT_W*sizeof(float));
 
 		void* deviceMem = safeCudaMalloc(memSize);
 		CHECK(cudaMemcpy(deviceMem, fileData, memSize, cudaMemcpyHostToDevice));
@@ -394,9 +420,6 @@ void execute(ICudaEngine& engine)
 
 		auto t_start = std::chrono::high_resolution_clock::now();
 		context->execute(batchSize, &buffers[0]);
-		auto t_end = std::chrono::high_resolution_clock::now();
-		ms = std::chrono::duration<float, std::milli>(t_end - t_start).count();
-		total += ms;
 
 		for (int bindingIdx = 0; bindingIdx < nbBindings; ++bindingIdx)
 		{
@@ -406,40 +429,39 @@ void execute(ICudaEngine& engine)
 			auto bufferSizesOutput = buffersSizes[bindingIdx];
 			int64_t eltCount = bufferSizesOutput.first;
 			DataType dtype = bufferSizesOutput.second;
-			float output_full[INPUT_H*INPUT_W];
+			//std::cout << "Element count is " << to_string(eltCount) << std::endl;
+
+			float output_full[eltCount];
 			loadOutput(eltCount, dtype, buffers[bindingIdx], output_full);
 
-			float output_ch1[INPUT_H][INPUT_W];
-			//float output_ch2[INPUT_H][INPUT_W];
-			memcpy(output_ch1, output_full, 28*28 * sizeof(output_full[0]));
-			//printOutput(eltCount, dtype, buffers[bindingIdx]);
-			//printTile2D(output_ch1);
-			// TODO: This should be added to the global final count and then divided
-			//saveCoeffs2D(output_ch1, 28, "../temp.txt");
-			for (int i = 0; i < INPUT_H; i++)
-			{
-				for (int j = 0; j < INPUT_W; j++)
+			for (int batchNum = 0; batchNum < batchesSent; batchNum++) {
+				float output_ch1[INPUT_H][INPUT_W];
+				memcpy(output_ch1, output_full + 2 * batchNum * INPUT_SIZE, INPUT_SIZE * sizeof(float));
+				//string saveName = "../patch_" + to_string(batchNum) + ".txt";
+				//saveCoeffs2D(output_ch1, saveName);
+				x_offs = patchStartIndex[0][batchNum];
+				y_offs = patchStartIndex[1][batchNum];
+				for (int i = 0; i < INPUT_H; i++)
 				{
-					imgHits[x_offs + i][y_offs + j]++;
-					imgTotal[x_offs + i][y_offs + j] = imgTotal[x_offs + i][y_offs + j] + output_ch1[i][j];
+					for (int j = 0; j < INPUT_W; j++)
+					{
+						imgHits[x_offs + i][y_offs + j]++;
+						imgTotal[x_offs + i][y_offs + j] = imgTotal[x_offs + i][y_offs + j] + output_ch1[i][j];
+					}
 				}
 			}
 		}
+		auto t_end = std::chrono::high_resolution_clock::now();
+		ms = std::chrono::duration<float, std::milli>(t_end - t_start).count();
+		total += ms;
+
 		CHECK(cudaFree(buffers[bindingIdxInput]));
 
-		x_offs_next = x_offs + separation;
-		if (x_offs_next + separation > IMG_H)
+
+		if (flag) 
 		{
-			y_offs_next = y_offs + separation;
-			//std::cout << "Reached end of line at " << x_offs_next << std::endl;
-			if (y_offs_next + separation > IMG_W)
-			{
-				//std::cout << "Reached end of image at " << x_offs_next << ":" << y_offs_next << std::endl;
-				break;
-			}
-			x_offs_next = 0;
+			break;
 		}
-		totalRuns++;
 	}
 
 	float imgFinal[IMG_H][IMG_W];
@@ -448,9 +470,8 @@ void execute(ICudaEngine& engine)
 			imgFinal[i][j] = imgTotal[i][j] / imgHits[i][j];
 		}
 	}
-	saveImageFull(imgFinal, "../full_image.txt");
+	saveImageFull(imgFinal, "../full_image_batched.txt");
 
-	//printImage(imgHits);
 	float average = total / totalRuns;
 	std::cout << "Average over " << totalRuns << " runs is " << average << " ms. Total " << total << std::endl;
 
@@ -469,7 +490,7 @@ int main(int argc, char** argv)
 {
     auto fileName = locateFile("uff_no_reshape.uff");
 
-    int maxBatchSize = 1;
+    int maxBatchSize = 2;
     auto parser = createUffParser();
 
     /* Register tensorflow input */
