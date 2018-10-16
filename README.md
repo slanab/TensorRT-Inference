@@ -11,15 +11,15 @@ Option 2:
 Import trained_est_to_saved_model function call after estimator training is complete, and pass already trained estimator as only parameter: trained_est_to_saved_model(drive_classifier). In this case, you don't need to explicitly specify checkpoint or model function.
 
 Either option will create a directory named "saved" containing numerically named folder, ex 1539645300. Run "saved_model_cli show --dir saved/1539645300/ --all" and note signature definitions for input and output. In this case, the script output was 
+
 MetaGraphDef with tag-set: 'serve' contains the following SignatureDefs:
 
-
 signature_def['serving_default']:<br />
-  The given SavedModel SignatureDef contains the following input(s):<br />
-    inputs['x'] tensor_info:<br />
-        dtype: DT_FLOAT<br />
-        shape: (-1, 480, 480, 1)<br />
-        name: Placeholder:0<br />
+    The given SavedModel SignatureDef contains the following input(s):<br />
+      inputs['x'] tensor_info:<br />
+          dtype: DT_FLOAT<br />
+          shape: (-1, 480, 480, 1)<br />
+          name: Placeholder:0<br />
   The given SavedModel SignatureDef contains the following output(s):<br />
     outputs['output'] tensor_info:<br />
         dtype: DT_FLOAT<br />
