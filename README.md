@@ -14,9 +14,9 @@ Either option will create a directory named "saved" containing numerically named
 MetaGraphDef with tag-set: 'serve' contains the following SignatureDefs:
 
 
-signature_def['serving_default']:
-  The given SavedModel SignatureDef contains the following input(s):
-    inputs['x'] tensor_info:
+signature_def['serving_default']:<br />
+  The given SavedModel SignatureDef contains the following input(s):<br />
+    inputs['x'] tensor_info:<br />
         dtype: DT_FLOAT
         shape: (-1, 480, 480, 1)
         name: Placeholder:0
