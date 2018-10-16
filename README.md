@@ -13,7 +13,7 @@ Import trained_est_to_saved_model function call after estimator training is comp
 Either option will create a directory named "saved" containing numerically named folder, ex 1539645300. Run "saved_model_cli show --dir saved/1539645300/ --all" and note signature definitions for input and output. In this case, the script output was 
 MetaGraphDef with tag-set: 'serve' contains the following SignatureDefs:
 
-'''
+
 signature_def['serving_default']:
   The given SavedModel SignatureDef contains the following input(s):
     inputs['x'] tensor_info:
@@ -26,7 +26,7 @@ signature_def['serving_default']:
         shape: (-1, 3)
         name: softmax_tensor:0
   Method name is: tensorflow/serving/predict
-'''
+
 
 ## Step 2. Create a frozen TensorFlow model
 Run "create_frozen_graph_from_saved path_to_saved_model" (ex create_frozen_graph_from_saved saved/1539645300). Rename variables "x_name" and "y_name" with the signature definition names from the previous steps (here 'x' and 'output'). A frozen graph is saved in the current directory.
