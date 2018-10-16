@@ -17,15 +17,15 @@ MetaGraphDef with tag-set: 'serve' contains the following SignatureDefs:
 signature_def['serving_default']:<br />
   The given SavedModel SignatureDef contains the following input(s):<br />
     inputs['x'] tensor_info:<br />
-        dtype: DT_FLOAT
-        shape: (-1, 480, 480, 1)
-        name: Placeholder:0
-  The given SavedModel SignatureDef contains the following output(s):
-    outputs['output'] tensor_info:
-        dtype: DT_FLOAT
-        shape: (-1, 3)
-        name: softmax_tensor:0
-  Method name is: tensorflow/serving/predict
+        dtype: DT_FLOAT<br />
+        shape: (-1, 480, 480, 1)<br />
+        name: Placeholder:0<br />
+  The given SavedModel SignatureDef contains the following output(s):<br />
+    outputs['output'] tensor_info:<br />
+        dtype: DT_FLOAT<br />
+        shape: (-1, 3)<br />
+        name: softmax_tensor:0<br />
+  Method name is: tensorflow/serving/predict<br />
 
 
 ## Step 2. Create a frozen TensorFlow model
